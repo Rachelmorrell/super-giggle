@@ -1,0 +1,128 @@
+aliases:
+  - &filter-ignore-gh-pages
+    branches:
+      ignore: gh-pages
+  - &filter-only-master
+    branches:
+      only: master
+
+version: 2
+jobs:
+  build:
+    docker:
+      - image: ubuntu:bionic
+    resource_class: xlarge
+    steps:
+      - checkout
+      - run: apt-get update
+      - run: apt-get install -y ca-certificates doxygen $(cat logdevice/build_tools/ubuntu.deps)
+      - run: git reset --hard HEAD
+      - run: git submodule sync
+      - run: git submodule update --init --recursive --remote
+      - run:
+          name: Build LogDevice
+          command: |
+            mkdir -p _build
+            cd _build
+            cmake -DPORTABLE=ON ../logdevice/
+            make -j 8
+      - run:
+          name: Generate Documentation
+          working_directory: _build
+          command: |
+            make -j 8 docs
+      - persist_to_workspace:
+          root: .
+          paths:
+            - website
+            - docs
+            - _build
+  deploy-website:
+    docker:
+      - image: circleci/node:8.12.0  # Use LTS version of Node.js
+    resource_class: large
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /tmp/workspace
+      - run:
+          name: Deploy LogDevice website
+          working_directory: /tmp/workspace
+          command: |
+            # Configure Docusaurus Bot
+            git config --global user.email "docusaurus-bot@users.noreply.github.com"
+            git config --global user.name "Docusaurus Bot"
+            echo "machine github.com login docusaurus-bot password $GITHUB_TOKEN" > ~/.netrc
+            # Install Docusaurus and publish the website
+            cd website && yarn install && GIT_USER=docusaurus-bot yarn publish-gh-pages
+  unittests:
+    docker:
+      - image: ubuntu:bionic
+    resource_class: xlarge
+    steps:
+      - checkout
+      - run: apt-get update
+      - run: apt-get install -y ca-certificates doxygen xsltproc $(cat logdevice/build_tools/ubuntu.deps)
+      - run: git reset --hard HEAD
+      - attach_workspace:
+          at: .
+      - run:
+          name: Unit Tests
+          working_directory: _build
+          command: |
+            mkdir -p ../gtest_results/unit_tests
+            make ARGS="-j 8 --output-on-failure --no-compress-output -T Test" test
+      - run:
+          name: Collect results
+          working_directory: _build
+          command: |
+            xsltproc ../.circleci/conv.xsl Testing/*/Test.xml > ../gtest_results/unit_tests/results.xml
+          when: always
+      - store_artifacts:
+          path: gtest_results
+          when: always
+      - store_test_results:
+          path: gtest_results
+          when: always
+  dockerimage:
+    docker:
+      - image: ubuntu:bionic
+    resource_class: xlarge
+    steps:
+      - checkout
+      - run: apt-get update
+      - run: apt-get install -y ca-certificates docker.io
+      - run: git reset --hard HEAD
+      - attach_workspace:
+          at: .
+      - setup_remote_docker:
+          docker_layer_caching: true
+      - run:
+          name: Assemble Docker Image
+          command: |
+            docker build -t facebookincubator/logdevice:latest -f docker/Dockerfile.ci .
+      - run:
+          name: Push Image to DockerHub
+          command: |
+            if [ -n "$DOCKER_PWD" ]; then
+              echo $DOCKER_PWD | docker login -u $DOCKER_LOGIN --password-stdin
+              docker push facebookincubator/logdevice:latest
+            fi
+workflows:
+  version: 2
+  build_and_deploy:
+    jobs:
+      - build:
+          filters: *filter-ignore-gh-pages
+      - unittests:
+          filters: *filter-ignore-gh-pages
+          requires:
+            - build
+      - dockerimage:
+          filters: *filter-only-master
+          requires:
+            - build
+      - deploy-website:
+          filters: *filter-only-master
+          requires:
+            - build

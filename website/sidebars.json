@@ -1,0 +1,28 @@
+{
+  "docs": {
+    "Getting started": [
+        "Overview",
+        "LocalCluster",
+        "Concepts",
+        "Terminology",
+        "Installation"
+    ],
+    "Configuration": [
+        "FirstCluster",
+        "Config",
+        "Settings",
+        "Logs"
+    ],
+      "Administration": [
+          "LDShell",
+          "LDQuery"
+      ],
+      "API": [
+          "API_Introduction",
+	        "API_Doxygen"
+      ],
+      "Extending LogDevice": [
+          "WritingPlugins"
+      ]
+  }
+}
